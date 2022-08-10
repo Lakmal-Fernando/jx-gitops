@@ -3,6 +3,7 @@ package template
 import (
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/jenkins-x-plugins/jx-gitops/pkg/helmfiles"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/options"
@@ -144,17 +145,31 @@ func (o *Options) Run() error {
 	if err != nil {
 		return errors.Wrapf(err, "error gathering helmfiles")
 	}
-
-	for _, helmfile := range helmfiles {
-		err := o.processHelmfile(helmfile)
-		if err != nil {
-			return errors.Wrapf(err, "failed to process helmfile %s", helmfile.Filepath)
-		}
-		// ToDo: What are we trying to do here?
-
+	// ToDo: What are we trying to do here?
+	errChan := make(chan error)
+	makeHelmfiles(helmfiles, o, errChan)
+	for err := range errChan {
+		return errors.Wrapf(err, "error process helmfiles")
 	}
-
 	return nil
+}
+
+func makeHelmfiles(helmfiles []helmfiles.Helmfile, o *Options, errChan chan error) {
+	defer close(errChan)
+	var wg sync.WaitGroup
+	wg.Add(len(helmfiles))
+	for _, helmfile := range helmfiles {
+		go makeHelmfile(helmfile, o, errChan, wg)
+	}
+	wg.Wait()
+}
+
+func makeHelmfile(helmfile helmfiles.Helmfile, o *Options, errChan chan error, wg sync.WaitGroup) {
+	defer wg.Done()
+	err := o.processHelmfile(helmfile)
+	if err != nil {
+		errChan <- errors.Wrapf(err, "failed to process helmfile %s", helmfile.Filepath)
+	}
 }
 
 func (o *Options) processHelmfile(helmfile helmfiles.Helmfile) error {
